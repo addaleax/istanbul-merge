@@ -6,7 +6,6 @@ var options = require('yargs')
 	.string('out')
 	.describe('out', 'output path for merged raw coverage report JSON file')
 	.normalize('out')
-	.require('out', 'output JSON path is required')
 	.require(1, 'at least one path to raw coverage report JSON files is required')
 	.string('_')
 	.describe('_', 'paths to raw coverage report JSON files to merge')
@@ -38,6 +37,10 @@ forEach(files, function (file) {
 	map.merge(JSON.parse(json));
 });
 
-var output = path.resolve(options.out);
-mkdirp.sync(path.dirname(output));
-fs.writeFileSync(output, JSON.stringify(map));
+if (options.out && options.out !== '-') {
+	var output = path.resolve(options.out);
+	mkdirp.sync(path.dirname(output));
+	fs.writeFileSync(output, JSON.stringify(map));
+} else {
+	console.log(JSON.stringify(map, null, '  '));
+}
