@@ -6,6 +6,9 @@ var options = require('yargs')
 	.string('out')
 	.describe('out', 'output path for merged raw coverage report JSON file')
 	.normalize('out')
+	.number('jobs')
+	.alias('jobs', 'J')
+	.describe('jobs', 'number of child processes to use for parallel work')
 	.require(1, 'at least one path to raw coverage report JSON files is required')
 	.string('_')
 	.describe('_', 'paths to raw coverage report JSON files to merge')
@@ -17,25 +20,34 @@ var options = require('yargs')
 var fs = require('fs');
 var path = require('path');
 var async = require('async');
+var evenChunks = require('even-chunks');
 var glob = require('glob');
 var istanbul = require('istanbul-lib-coverage');
 var mkdirp = require('mkdirp');
+var execFile = require('child_process').execFile;
 
 globFiles(options._, function (err, files) {
 	if (err) throw err;
 
-	mergeFiles(files, function (err, result) {
-		if (err) throw err;
-
-		if (options.out && options.out !== '-') {
-			var output = path.resolve(options.out);
-			mkdirp.sync(path.dirname(output));
-			fs.writeFileSync(output, JSON.stringify(result));
-		} else {
-			console.log(JSON.stringify(result, null, '  '));
-		}
-	});
+	if (options.jobs) {
+		var chunks = evenChunks(files, options.jobs, evenChunks.ROUND_ROBIN);
+		runChildren(chunks, printResult);
+	} else {
+		mergeFiles(files, printResult);
+	}
 });
+
+function printResult (err, result) {
+	if (err) throw err;
+
+	if (options.out && options.out !== '-') {
+		var output = path.resolve(options.out);
+		mkdirp.sync(path.dirname(output));
+		fs.writeFileSync(output, JSON.stringify(result));
+	} else {
+		console.log(JSON.stringify(result));
+	}
+}
 
 function globFiles(patterns, callback) {
 	async.map(patterns, function (input, callback) {
@@ -54,6 +66,33 @@ function globFiles(patterns, callback) {
 		}, []);
 
 		callback(null, files);
+	});
+}
+
+function runChildren(fileLists, callback) {
+	var map = istanbul.createCoverageMap({});
+	async.map(fileLists, function(files, callback) {
+		if (files.length === 0) {
+			return callback(null);
+		}
+
+		execFile(process.execPath,
+						[__filename].concat(files),
+						{ maxBuffer: Infinity },
+						function(error, stdout) {
+			if (error) {
+				return callback(error);
+			}
+
+			map.merge(JSON.parse(stdout));
+			callback(null);
+		});
+	}, function(err) {
+		if (err) {
+			return callback(err);
+		}
+
+		callback(null, map);
 	});
 }
 
