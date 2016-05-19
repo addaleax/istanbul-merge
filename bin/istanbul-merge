@@ -16,31 +16,63 @@ var options = require('yargs')
 
 var fs = require('fs');
 var path = require('path');
-var forEach = require('foreach');
+var async = require('async');
 var glob = require('glob');
 var istanbul = require('istanbul-lib-coverage');
 var mkdirp = require('mkdirp');
 
-var files = [];
-forEach(options._, function (input) {
-	var results = glob.sync(input, {
-		mark: true,
-		nosort: true,
-		strict: true
+globFiles(options._, function (err, files) {
+	if (err) throw err;
+
+	mergeFiles(files, function (err, result) {
+		if (err) throw err;
+
+		if (options.out && options.out !== '-') {
+			var output = path.resolve(options.out);
+			mkdirp.sync(path.dirname(output));
+			fs.writeFileSync(output, JSON.stringify(result));
+		} else {
+			console.log(JSON.stringify(result, null, '  '));
+		}
 	});
-	files.push.apply(files, results);
 });
 
-var map = istanbul.createCoverageMap({});
-forEach(files, function (file) {
-	var json = fs.readFileSync(file);
-	map.merge(JSON.parse(json));
-});
+function globFiles(patterns, callback) {
+	async.map(patterns, function (input, callback) {
+		glob(input, {
+			mark: true,
+			nosort: true,
+			strict: true
+		}, callback);
+	}, function(err, fileLists) {
+		if (err) {
+			return callback(err);
+		}
 
-if (options.out && options.out !== '-') {
-	var output = path.resolve(options.out);
-	mkdirp.sync(path.dirname(output));
-	fs.writeFileSync(output, JSON.stringify(map));
-} else {
-	console.log(JSON.stringify(map, null, '  '));
+		var files = fileLists.reduce(function (a, b) {
+			return a.concat(b);
+		}, []);
+
+		callback(null, files);
+	});
+}
+
+function mergeFiles(files, callback) {
+	var map = istanbul.createCoverageMap({});
+	async.mapSeries(files, function (file, callback) {
+		var json = fs.readFile(file, function (err, json) {
+			if (err) {
+				return callback(err);
+			}
+
+			map.merge(JSON.parse(json));
+			callback(null);
+		});
+	}, function(err) {
+		if (err) {
+			return callback(err);
+		}
+
+		callback(null, map);
+	});
 }
